@@ -54,3 +54,11 @@ Backup downloads contain business data, including receipts, but exclude accounts
 ## Deployment scope
 
 This is a working single-company application suitable for development and evaluation. Production use needs a deployment review, HTTPS, private credentials, backup operations, and requirements specific to your tax jurisdiction. SQLite supports a single application instance; a multi-instance deployment should migrate storage and sessions to a managed relational database. The API currently reads collections in memory, while the frontend paginates. For large datasets, add server-side queries and pagination. PDF uses browser printing, CSV opens in Excel; native `.xlsx` files are not generated. Receipts support images up to 1 MB. Multi-company accounting, bank reconciliation, credit notes, sales returns with financial reversal, and tax filings need further implementation.
+
+## GitHub Codespaces
+
+Open the repository in a Codespace, use Node.js 24, and run `npm ci` followed by `npm run dev`. Open the forwarded **3000** port from the Ports panel and keep its visibility **Private**. The server derives this Codespace's exact HTTPS origin from the standard `CODESPACES`, `CODESPACE_NAME`, and `GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN` variables. Login and other writes accept that origin while rejecting unrelated sites. Vite uses the same port for live reload and accepts this Codespace's exact host.
+
+After pulling a server update, stop the existing process with Ctrl+C and restart `npm run dev`. Refresh the forwarded browser URL. Do not use your computer's localhost URL for a Codespace-hosted server.
+
+For a different reverse proxy, set `APP_ORIGIN` to the exact public origin, for example `https://trade.example`, before startup. Do not include a path. The application does not trust arbitrary client-supplied forwarding headers for origin checks.
