@@ -14,6 +14,9 @@ export function publicOrigins(env = process.env) {
       throw new Error('Invalid Codespaces forwarding configuration');
     }
     origins.push(`https://${env.CODESPACE_NAME}-${env.PORT || 3000}.${domain}`);
+    // Codespaces' HTTPS forwarding proxy can rewrite Origin to its local target.
+    // Accept only this exact alias, and only in the Codespaces environment.
+    origins.push(`https://localhost:${env.PORT || 3000}`);
   }
   return [...new Set(origins)];
 }

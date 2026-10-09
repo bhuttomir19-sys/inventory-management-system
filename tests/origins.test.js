@@ -4,9 +4,12 @@ import { publicOrigins, validOrigin } from '../origins.js';
 const req = (origin, forwarded = {}) => ({ protocol: 'http', headers: { origin, ...forwarded }, get: () => 'localhost:3000' });
 test('accepts local requests and the exact configured Codespaces origin', () => {
  const origins = publicOrigins({ CODESPACES: 'true', CODESPACE_NAME: 'my-workspace', GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: 'app.github.dev' });
- assert.deepEqual(origins, ['https://my-workspace-3000.app.github.dev']);
+ assert.deepEqual(origins, ['https://my-workspace-3000.app.github.dev','https://localhost:3000']);
  assert.equal(validOrigin(req('http://localhost:3000'), origins), true);
  assert.equal(validOrigin(req(origins[0]), origins), true);
+ assert.equal(validOrigin(req('https://localhost:3000'), origins), true);
+ assert.equal(validOrigin(req('https://localhost:3001'), origins), false);
+ assert.equal(validOrigin(req('https://localhost:3000'), []), false);
  assert.equal(validOrigin(req(undefined), origins), true);
  assert.equal(validOrigin(req('https://other-workspace-3000.app.github.dev'), origins), false);
  assert.equal(validOrigin(req('https://my-workspace-3000.app.github.dev.attacker.example'), origins), false);
