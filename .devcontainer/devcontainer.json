@@ -1,0 +1,9 @@
+{
+  "name": "Tradeflow · Node.js 24 + MySQL",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm",
+  "features": {"ghcr.io/devcontainers/features/docker-in-docker:2": {}},
+  "forwardPorts": [3000],
+  "portsAttributes": {"3000": {"label": "Trading application", "onAutoForward": "openBrowser"}},
+  "postCreateCommand": "npm ci",
+  "remoteUser": "node"
+}

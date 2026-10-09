@@ -3,3 +3,6 @@ dist/
 data/
 .env
 *.log
+.env.*
+!.env.example
+.mysql-test/
