@@ -12,9 +12,10 @@ export function openDB(file='data/tradeflow.sqlite') {
  CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, date TEXT NOT NULL, data TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS movements(id INTEGER PRIMARY KEY, productId INTEGER NOT NULL REFERENCES products(id), date TEXT NOT NULL, quantity REAL NOT NULL, reason TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL, permissions TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, userId INTEGER REFERENCES users(id), expires INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, userId INTEGER REFERENCES users(id), expires INTEGER NOT NULL, duration INTEGER NOT NULL DEFAULT 86400000);
  CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, date TEXT, actor TEXT, action TEXT, details TEXT);
  CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);`);
+ if(!db.prepare("PRAGMA table_info(sessions)").all().some(column=>column.name==='duration'))db.exec("ALTER TABLE sessions ADD COLUMN duration INTEGER NOT NULL DEFAULT 86400000");
  return db;
 }
 export const rows=(db,table)=>db.prepare(`SELECT * FROM ${table} ORDER BY id DESC`).all().map(r=>r.data?{...JSON.parse(r.data),id:r.id,...(r.kind?{kind:r.kind,date:r.date}:{})}:r);
