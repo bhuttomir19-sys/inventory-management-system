@@ -72,3 +72,7 @@ APP_ORIGIN="https://YOUR-CODESPACE-3000.app.github.dev" npm run dev
 ```
 
 Startup prints the accepted public origins. Opening `/api/health` on the forwarded website shows `version: codespaces-2` and the configured origins, without credentials. If it instead asks for sign-in or shows a different version, the browser is reaching an older process or checkout. A port-in-use error now exits instead of displaying a misleading startup message. Stop the old process before restarting; do not change the port unless you also forward the new port and update the origin.
+
+## Company branding
+
+Go to **Settings & admin → Company settings**. Edit **Company name** (used for business details and invoice company information) and **Application name** (shown in navigation, sign-in, browser title, and invoice branding). Upload a PNG, JPEG, or WebP logo up to 512 KB, review the preview, then click **Save settings**. Use **Remove logo** and save to return to the initial-letter mark. Changes persist in SQLite and are included in business-data backups. Only users with admin edit permission can update these settings. The unauthenticated branding endpoint exposes only the name and logo required by the login screen; contact and financial settings remain private.
