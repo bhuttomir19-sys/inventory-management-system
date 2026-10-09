@@ -6,7 +6,8 @@ import { openDB,seed,rows,put,hashPassword,verifyPassword,createDocument } from 
 const db=openDB(process.env.DB_PATH||'data/tradeflow.sqlite');seed(db);
 const configuredOrigins=publicOrigins();
 const app=express();const httpServer=createHttpServer(app);app.disable('x-powered-by');app.use(express.json({limit:'3mb'}));
-app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');if(req.method!=='GET'&&!validOrigin(req,configuredOrigins))return res.status(403).json({error:'Invalid request origin'});next();});
+app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');if(req.method!=='GET'&&!validOrigin(req,configuredOrigins))return res.status(403).json({error:'Invalid request origin. Set APP_ORIGIN to the HTTPS address in your browser (without a path), then restart the server.'});next();});
+app.get('/api/health',(req,res)=>{db.prepare('SELECT 1').get();res.json({status:'ok',version:'codespaces-2',publicOrigins:configuredOrigins});});
 const attempts=new Map();
 app.post('/api/login',(req,res)=>{const key=req.ip;const a=attempts.get(key)||{n:0,time:Date.now()};if(Date.now()-a.time>900000){a.n=0;a.time=Date.now();}if(a.n>=20)return res.status(429).json({error:'Too many attempts. Try again in 15 minutes.'});const user=db.prepare('SELECT * FROM users WHERE email=?').get(String(req.body.email||'').toLowerCase());if(!user||!verifyPassword(String(req.body.password||''),user.password)){a.n++;attempts.set(key,a);return res.status(401).json({error:'Email or password is incorrect'});}attempts.delete(key);const token=randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(token,user.id,Date.now()+86400000);res.cookie('session',token,{httpOnly:true,sameSite:'strict',secure:process.env.COOKIE_SECURE==='true',maxAge:86400000});res.json({ok:true});});
 app.use('/api',(req,res,next)=>{const token=req.headers.cookie?.split(';').map(c=>c.trim()).find(c=>c.startsWith('session='))?.slice(8);const session=db.prepare('SELECT * FROM sessions WHERE token=? AND expires>?').get(token||'',Date.now());if(!session)return res.status(401).json({error:'Please sign in'});req.user=db.prepare('SELECT * FROM users WHERE id=?').get(session.userId);req.permissions=JSON.parse(req.user.permissions);req.token=token;next();});
@@ -28,5 +29,24 @@ app.delete('/api/users/:id',permit('admin','delete'),(req,res,next)=>{try{if(Num
 app.get('/api/backup',permit('admin','export'),(req,res)=>{audit(req,'Exported backup','Business data');res.attachment('tradeflow-backup.json').json({version:1,products:rows(db,'products'),customers:rows(db,'customers'),vendors:rows(db,'vendors'),documents:rows(db,'documents'),movements:db.prepare('SELECT * FROM movements').all(),settings:JSON.parse(db.prepare('SELECT data FROM settings').get().data)});});
 app.post('/api/restore',permit('admin','edit'),(req,res,next)=>{try{const b=req.body;if(b.version!==1||!['products','customers','vendors','documents','movements'].every(k=>Array.isArray(b[k]))||!b.settings?.company)throw Error('Invalid backup file');db.exec('BEGIN IMMEDIATE');for(const t of ['movements','documents','products','customers','vendors'])db.exec(`DELETE FROM ${t}`);for(const t of ['products','customers','vendors'])for(const r of b[t])db.prepare(`INSERT INTO ${t}(id,data) VALUES(?,?)`).run(r.id,JSON.stringify(r));for(const d of b.documents)db.prepare('INSERT INTO documents(id,kind,date,data) VALUES(?,?,?,?)').run(d.id,d.kind,d.date,JSON.stringify(d));for(const m of b.movements)db.prepare('INSERT INTO movements VALUES(?,?,?,?,?)').run(m.id,m.productId,m.date,m.quantity,m.reason);put(db,'settings',b.settings,1);db.exec('COMMIT');audit(req,'Restored backup','Business data replaced');res.json({ok:true});}catch(e){try{db.exec('ROLLBACK');}catch{}next(e);}});
 app.use('/api',(req,res)=>res.status(404).json({error:'Endpoint not found'}));app.use((err,req,res,next)=>res.status(400).json({error:err.message.includes('UNIQUE')?'This email or identifier already exists':err.message}));
-if(process.env.NODE_ENV==='production'){app.use(express.static('dist'));app.get('/{*path}',(req,res)=>res.sendFile(process.cwd()+'/dist/index.html'));}else{const {createServer}=await import('vite');const vite=await createServer({server:{middlewareMode:true,allowedHosts:configuredOrigins.map(origin=>new URL(origin).hostname),hmr:{server:httpServer,...(process.env.CODESPACES==='true'?{clientPort:443}:{})}},appType:'spa'});app.use(vite.middlewares);}
-httpServer.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('Tradeflow running on port '+(process.env.PORT||3000)));
+let viteServer;
+if(process.env.NODE_ENV==='production'){app.use(express.static('dist'));app.get('/{*path}',(req,res)=>res.sendFile(process.cwd()+'/dist/index.html'));}else{const {createServer}=await import('vite');viteServer=await createServer({server:{middlewareMode:true,allowedHosts:configuredOrigins.map(origin=>new URL(origin).hostname),hmr:{server:httpServer,...(process.env.CODESPACES==='true'?{clientPort:443}:{})}},appType:'spa'});app.use(viteServer.middlewares);}
+const port=Number(process.env.PORT||3000);
+httpServer.on('error',error=>{
+ console.error(error.code==='EADDRINUSE'?`Port ${port} is already in use. Stop the older Tradeflow server before restarting.`:`Server startup failed: ${error.message}`);
+ process.exit(1);
+});
+httpServer.listen(port,'0.0.0.0',error=>{
+ if(error)return; // Node may pass a bind error to the callback; the error handler reports it.
+ console.log('Tradeflow running on port '+port);
+ console.log('Public origins: '+(configuredOrigins.join(', ')||'local address only; set APP_ORIGIN for an HTTPS proxy'));
+});
+let shuttingDown=false;
+async function shutdown(){
+ if(shuttingDown)return;shuttingDown=true;
+ const timeout=setTimeout(()=>process.exit(0),5000);timeout.unref();
+ await viteServer?.close();
+ httpServer.close(()=>{db.close();process.exit(0);});
+ httpServer.closeAllConnections();
+}
+process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);

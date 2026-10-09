@@ -62,3 +62,13 @@ Open the repository in a Codespace, use Node.js 24, and run `npm ci` followed by
 After pulling a server update, stop the existing process with Ctrl+C and restart `npm run dev`. Refresh the forwarded browser URL. Do not use your computer's localhost URL for a Codespace-hosted server.
 
 For a different reverse proxy, set `APP_ORIGIN` to the exact public origin, for example `https://trade.example`, before startup. Do not include a path. The application does not trust arbitrary client-supplied forwarding headers for origin checks.
+
+### Troubleshooting a forwarded URL
+
+If login reports an invalid origin, copy only the origin from your browser (scheme and hostname, no trailing path). Stop the old server and run:
+
+```sh
+APP_ORIGIN="https://YOUR-CODESPACE-3000.app.github.dev" npm run dev
+```
+
+Startup prints the accepted public origins. Opening `/api/health` on the forwarded website shows `version: codespaces-2` and the configured origins, without credentials. If it instead asks for sign-in or shows a different version, the browser is reaching an older process or checkout. A port-in-use error now exits instead of displaying a misleading startup message. Stop the old process before restarting; do not change the port unless you also forward the new port and update the origin.
