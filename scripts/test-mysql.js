@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import {readFileSync} from 'node:fs';
 import {connectDatabase}from'../storage.js';import{spawn}from'node:child_process';import{once}from'node:events';
 if(process.env.DB_CLIENT!=='mysql')throw Error('Configure DB_CLIENT=mysql in .env before running MySQL tests');
 // Tests create a separate sibling database. Never clear or mutate the application database.

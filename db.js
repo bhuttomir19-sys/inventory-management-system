@@ -1,7 +1,7 @@
 import {transaction} from './storage.js';
 import {hashPassword} from './sqlite.js';
 export {openDB,hashPassword,verifyPassword} from './sqlite.js';
-export const rows=async(db,table)=>(await db.prepare(`SELECT * FROM ${table} ORDER BY id DESC${db.driver==='mysql'&&db.inTransaction?' FOR UPDATE':''}`).all()).map(r=>r.data?{...JSON.parse(r.data),id:r.id,...(r.kind?{kind:r.kind,date:r.date}:{})}:r);
+export const rows=async(db,table)=>(await db.prepare(`SELECT * FROM ${table}${db.driver==='mssql'&&db.inTransaction?' WITH (UPDLOCK, HOLDLOCK)':''} ORDER BY id DESC${db.driver==='mysql'&&db.inTransaction?' FOR UPDATE':''}`).all()).map(r=>r.data?{...JSON.parse(r.data),id:r.id,...(r.kind?{kind:r.kind,date:r.date}:{})}:r);
 export const put=async(db,table,data,id)=>{ if(id) await db.prepare(`UPDATE ${table} SET data=? WHERE id=?`).run(JSON.stringify(data),id);else id=Number((await db.prepare(`INSERT INTO ${table}(data) VALUES(?)`).run(JSON.stringify(data))).lastInsertRowid);return id;};
 export async function createDocument(db,kind,input) {
  if(!['sales','purchases','payments','expenses','adjustments','cash'].includes(kind)) throw Error('Invalid transaction type');

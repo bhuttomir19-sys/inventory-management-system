@@ -6,6 +6,6 @@ const defaults={DB_CLIENT:'mysql',MYSQL_HOST:'127.0.0.1',MYSQL_PORT:'3306',MYSQL
 const additions=Object.entries(defaults).filter(([key])=>env[key]===undefined||env[key]==='').map(([key,value])=>`${key}=${value}`);
 if(additions.length)writeFileSync(file,text+(text&&!text.endsWith('\n')?'\n':'')+additions.join('\n')+'\n',{mode:0o600});
 console.log('MySQL settings prepared in ignored .env. Existing values were preserved; passwords were not printed.');
-console.log('Next: npm run db:up; stop the app before migrating, then npm run db:migrate.');
+console.log('Legacy MySQL: npm run db:mysql:up; for SQLite import use npm run db:migrate:sqlite-mysql.');
 
 if(env.DB_CLIENT&&env.DB_CLIENT!=='mysql')console.log('Your existing DB_CLIENT was preserved. Set DB_CLIENT=mysql in .env to switch the application.');

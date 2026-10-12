@@ -1,10 +1,12 @@
 import mysql from 'mysql2/promise';
+import {connectSqlServer} from './mssql-storage.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { openDB as openSQLite } from './sqlite.js';
 import { readFileSync } from 'node:fs';
 export async function connectDatabase(env=process.env) {
- const driver=env.DB_CLIENT|| (env.MYSQL_HOST?'mysql':'sqlite');
- if(!['sqlite','mysql'].includes(driver))throw Error('DB_CLIENT must be mysql or sqlite');
+ const driver=env.DB_CLIENT|| (env.MSSQL_HOST?'mssql':env.MYSQL_HOST?'mysql':'mssql');
+ if(driver==='mssql')return connectSqlServer(env);
+ if(!['sqlite','mysql'].includes(driver))throw Error('DB_CLIENT must be mssql, mysql or sqlite');
  const context=new AsyncLocalStorage();let pool,local;let queue=Promise.resolve();
  if(driver==='mysql'){
   for(const key of ['MYSQL_HOST','MYSQL_USER','MYSQL_DATABASE'])if(!env[key])throw Error(`Set ${key} in .env before starting MySQL mode`);
