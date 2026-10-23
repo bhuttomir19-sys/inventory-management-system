@@ -14,3 +14,11 @@ test('SQL Server verifies certificates by default and requires connection config
  const config=sqlServerConfig({MSSQL_HOST:'db.example.com',MSSQL_USER:'app',MSSQL_PASSWORD:'example',MSSQL_DATABASE:'tradeflow'});assert.equal(config.options.encrypt,true);assert.equal(config.options.trustServerCertificate,false);assert.equal(config.port,1433);
  assert.throws(()=>sqlServerConfig({}),/MSSQL_HOST/);
 });
+import{relationalValues}from'../relational.js';
+test('Column mapping converts numeric form input, separates parties and refuses unmapped migration fields',()=>{
+ const product=relationalValues('products',{name:'Item',sku:' A-1 ',stock:'2.25',sellingPrice:'35.50',items:[{productId:''}],role:'Sales User'},{strict:true});assert.equal(product.stock,2.25);assert.equal(product.sellingPrice,35.5);assert.equal(product.sku,'A-1');assert.equal(relationalValues('products',{stock:0.1+0.2}).stock,0.3);assert.ok(!Object.hasOwn(product,'data'));
+ const sale=relationalValues('documents',{kind:'sales',partyId:'12',date:'2026-10-23'});assert.equal(sale.customerId,12);assert.equal(sale.vendorId,null);
+ const payment=relationalValues('documents',{kind:'payments',direction:'paid',partyId:'14'});assert.equal(payment.vendorId,14);assert.equal(payment.customerId,null);
+ assert.throws(()=>relationalValues('products',{name:'Item',custom:'preserve this'},{strict:true}),/Unmapped products.custom/);
+ assert.throws(()=>relationalValues('products',{stock:0.123456789}),/decimal places/);
+});

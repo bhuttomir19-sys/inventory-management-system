@@ -17,7 +17,8 @@
     "db:prepare": "node scripts/prepare-mssql.js",
     "db:migrate:sqlite-mysql": "node scripts/migrate-sqlite.js",
     "db:mysql:up": "docker compose -f compose.yaml up -d --wait",
-    "test:mssql": "node scripts/test-mssql.js"
+    "test:mssql": "node scripts/test-mssql.js",
+    "db:normalize": "node scripts/normalize-mssql.js"
   },
   "dependencies": {
     "dotenv": "^18.0.6",

@@ -1,8 +1,38 @@
+import {relationalRows,writeRelational,insertSqlRow,replacePermissions,userPermissions} from './relational.js';
 import {transaction} from './storage.js';
 import {hashPassword} from './sqlite.js';
 export {openDB,hashPassword,verifyPassword} from './sqlite.js';
-export const rows=async(db,table)=>(await db.prepare(`SELECT * FROM ${table}${db.driver==='mssql'&&db.inTransaction?' WITH (UPDLOCK, HOLDLOCK)':''} ORDER BY id DESC${db.driver==='mysql'&&db.inTransaction?' FOR UPDATE':''}`).all()).map(r=>r.data?{...JSON.parse(r.data),id:r.id,...(r.kind?{kind:r.kind,date:r.date}:{})}:r);
-export const put=async(db,table,data,id)=>{ if(id) await db.prepare(`UPDATE ${table} SET data=? WHERE id=?`).run(JSON.stringify(data),id);else id=Number((await db.prepare(`INSERT INTO ${table}(data) VALUES(?)`).run(JSON.stringify(data))).lastInsertRowid);return id;};
+export const rows=async(db,table)=>db.driver==='mssql'?relationalRows(db,table):(await db.prepare(`SELECT * FROM ${table} ORDER BY id DESC${db.driver==='mysql'&&db.inTransaction?' FOR UPDATE':''}`).all()).map(r=>r.data?{...JSON.parse(r.data),id:r.id,...(r.kind?{kind:r.kind,date:r.date}:{})}:r);
+export async function settings(db){return db.driver==='mssql'?(await rows(db,'settings'))[0]||{}:JSON.parse((await db.prepare('SELECT data FROM settings WHERE id=1').get())?.data||'{}');}
+export async function put(db,table,data,id){
+ if(db.driver==='mssql')return writeRelational(db,table,data,id);
+ if(id){const result=await db.prepare(`UPDATE ${table} SET data=? WHERE id=?`).run(JSON.stringify(data),id);if(!result.changes&&table==='settings')await db.prepare('INSERT INTO settings(id,data) VALUES(?,?)').run(id,JSON.stringify(data));}
+ else if(table==='documents')id=Number((await db.prepare('INSERT INTO documents(kind,date,data) VALUES(?,?,?)').run(data.kind,data.date,JSON.stringify(data))).lastInsertRowid);
+ else id=Number((await db.prepare(`INSERT INTO ${table}(data) VALUES(?)`).run(JSON.stringify(data))).lastInsertRowid);
+ return id;
+}
+export async function insertRecord(db,table,data,id){
+ if(db.driver==='mssql')return writeRelational(db,table,data,id,{insert:true});
+ if(table==='documents')await db.prepare('INSERT INTO documents(id,kind,date,data) VALUES(?,?,?,?)').run(id,data.kind,data.date,JSON.stringify(data));
+ else await db.prepare(`INSERT INTO ${table}(id,data) VALUES(?,?)`).run(id,JSON.stringify(data));return id;
+}
+export async function users(db,key,value){
+ if(key&&!['id','email'].includes(key))throw Error('Invalid user lookup');
+ const found=await db.prepare(`SELECT * FROM users${key?` WHERE ${key}=?`:''}`).all(...(key?[value]:[]));
+ if(db.driver==='mssql')for(const user of found)user.permissions=JSON.stringify(await userPermissions(db,user.id));return found;
+}
+export async function saveUser(db,user,id,{insert=false}={}){
+ return transaction(db,async()=>{
+  const permissions=typeof user.permissions==='string'?user.permissions:JSON.stringify(user.permissions||{});
+  if(db.driver==='mssql'){
+   if(id&&!insert)await db.prepare('UPDATE users SET name=?,role=? WHERE id=?').run(user.name,user.role,id);
+   else id=Number((await insertSqlRow(db,'users',{...(id?{id}:{}),name:user.name,email:user.email,password:user.password,role:user.role})).lastInsertRowid)||id;
+   await replacePermissions(db,id,permissions);
+  }else if(id&&!insert)await db.prepare('UPDATE users SET name=?,role=?,permissions=? WHERE id=?').run(user.name,user.role,permissions,id);
+  else id=Number((await db.prepare('INSERT INTO users(name,email,password,role,permissions) VALUES(?,?,?,?,?)').run(user.name,user.email,user.password,user.role,permissions)).lastInsertRowid);
+  return id;
+ });
+}
 export async function createDocument(db,kind,input) {
  if(!['sales','purchases','payments','expenses','adjustments','cash'].includes(kind)) throw Error('Invalid transaction type');
  const date=input.date||new Date().toISOString().slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date) throw Error('Invalid date');
@@ -19,18 +49,17 @@ export async function createDocument(db,kind,input) {
  } else {
  const amount=Number(input.amount);if(!Number.isFinite(amount)||amount<=0) throw Error('Amount must be positive');data.total=amount;
  if(kind==='payments'){const table=input.direction==='received'?'customers':'vendors';const party=(await rows(db,table)).find(p=>p.id===Number(input.partyId));if(!party)throw Error('Select a valid customer or vendor');if(amount>party.balance)throw Error('Payment exceeds outstanding balance');party.balance=Math.round((party.balance-amount)*100)/100;await put(db,table,party,party.id);data.partyName=party.name;
- let remaining=amount;for(const doc of (await rows(db,'documents')).reverse().filter(d=>d.kind===(table==='customers'?'sales':'purchases')&&d.partyId===party.id&&d.outstanding>0)){const applied=Math.min(remaining,doc.outstanding);doc.paid=Math.round((doc.paid+applied)*100)/100;doc.outstanding=Math.round((doc.outstanding-applied)*100)/100;doc.status=doc.outstanding===0?'Paid':'Partial';await db.prepare('UPDATE documents SET data=? WHERE id=?').run(JSON.stringify(doc),doc.id);remaining-=applied;if(remaining<=0)break;}}
+ let remaining=amount;for(const doc of (await rows(db,'documents')).reverse().filter(d=>d.kind===(table==='customers'?'sales':'purchases')&&d.partyId===party.id&&d.outstanding>0)){const applied=Math.min(remaining,doc.outstanding);doc.paid=Math.round((doc.paid+applied)*100)/100;doc.outstanding=Math.round((doc.outstanding-applied)*100)/100;doc.status=doc.outstanding===0?'Paid':'Partial';await put(db,'documents',doc,doc.id);remaining-=applied;if(remaining<=0)break;}}
  if(kind==='adjustments'){const p=(await rows(db,'products')).find(p=>p.id===Number(input.productId));const q=input.direction==='in'?amount:-amount;if(!p||p.stock+q<0)throw Error('Invalid stock adjustment');p.stock+=q;await put(db,'products',p,p.id);await db.prepare('INSERT INTO movements(productId,date,quantity,reason) VALUES(?,?,?,?)').run(p.id,date,q,input.reason||'Adjustment');}
  }
- const id=Number((await db.prepare('INSERT INTO documents(kind,date,data) VALUES(?,?,?)').run(kind,date,JSON.stringify(data))).lastInsertRowid);const config=await db.prepare('SELECT data FROM settings WHERE id=1').get();const prefix=kind==='sales'?(config?JSON.parse(config.data).invoicePrefix||'INV':'INV'):{purchases:'PUR',payments:'PAY',expenses:'EXP',adjustments:'STK',cash:'CSH'}[kind];data.number=`${prefix}-${String(id).padStart(5,'0')}`;await db.prepare('UPDATE documents SET data=? WHERE id=?').run(JSON.stringify(data),id);return {...data,id,kind};
+ const id=await put(db,'documents',{...data,kind,date});const config=await settings(db);const prefix=kind==='sales'?(config.invoicePrefix||'INV'):{purchases:'PUR',payments:'PAY',expenses:'EXP',adjustments:'STK',cash:'CSH'}[kind];data.number=`${prefix}-${String(id).padStart(5,'0')}`;await put(db,'documents',{...data,kind,date},id);return {...data,id,kind};
  });
 }
 export async function seed(db) {
  if((await db.prepare('SELECT count(*) n FROM users').get()).n)return;
  const all=['dashboard','products','inventory','customers','vendors','sales','purchases','finance','expenses','reports','admin'];
- await db.prepare('INSERT INTO users(name,email,password,role,permissions) VALUES(?,?,?,?,?)').run('Alex Morgan','admin@tradeflow.local',hashPassword(process.env.ADMIN_PASSWORD||'Tradeflow2026!'),'Super Admin',JSON.stringify(Object.fromEntries(all.map(m=>[m,['view','add','edit','delete','print','export']]))));
+ await saveUser(db,{name:'Alex Morgan',email:'admin@tradeflow.local',password:hashPassword(process.env.ADMIN_PASSWORD||'Tradeflow2026!'),role:'Super Admin',permissions:Object.fromEntries(all.map(m=>[m,['view','add','edit','delete','print','export']]))});
  await put(db,'settings',{company:'Tradeflow Trading Co.',email:'hello@tradeflow.local',phone:'+92 300 1234567',address:'Business Avenue, Karachi',currency:'USD',tax:5,invoicePrefix:'INV',registration:'TRD-2026-001'},1);
- if(!(await db.prepare('SELECT * FROM settings').get()))await db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({company:'Tradeflow Trading Co.',currency:'USD',tax:5}));
  const products=[['EL-001','Wireless Headphones','Electronics','Sony','Piece',55,89,12,85],['EL-002','Smart Watch Pro','Electronics','Samsung','Piece',110,179,10,42],['OF-003','Ergonomic Office Chair','Office supplies','Herman','Piece',145,245,8,24],['EL-004','USB-C Charging Cable','Electronics','Anker','Piece',6,15,25,180],['OF-005','Premium Notebook Set','Office supplies','Moleskine','Set',8,18,20,95],['HM-006','Insulated Water Bottle','Home & living','Hydro','Piece',12,29,15,62],['EL-007','Bluetooth Speaker','Electronics','JBL','Piece',38,69,10,7],['OF-008','Desk Organizer','Office supplies','Orbit','Piece',9,22,15,9],['EL-009','Portable Power Bank','Electronics','Anker','Piece',22,45,12,8]];
  for(const [sku,name,category,brand,unit,purchasePrice,sellingPrice,minStock,stock] of products)await put(db,'products',{sku,name,category,brand,unit,purchasePrice,sellingPrice,minStock,stock,openingStock:stock,status:'Active',description:''});
  await Promise.all(['Acme Corporation','Westfield Retail','Brightline Solutions','Urban Market','Nexus Enterprises'].map(async(name,i)=>await put(db,'customers',{name,company:name,contact:['Sarah Johnson','David Chen','Emma Wilson','James Miller','Olivia Brown'][i],email:`accounts${i}@example.com`,phone:'+1 555 0100',address:'Commercial District',registration:'',openingBalance:0,balance:0})));

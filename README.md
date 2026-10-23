@@ -2,6 +2,22 @@
 
 A responsive React application with an Express API and persistent Microsoft SQL Server database, with MySQL/SQLite compatibility during migration. Includes a seeded demo company, dashboard, catalog, stock movements, customers, suppliers, sales, purchases, payments, cash/bank entries, expenses with image receipts, reports, printable invoices, configurable user permissions, company settings, audit logs, and business-data backup/restore.
 
+## Column-wise SQL Server storage
+
+SQL Server now uses relational columns for products, contacts, settings and transaction headers, plus `document_items` and `user_permissions` child tables. JSON is used for API responses/portable backups only. See [the schema, relationships, SQL queries and migration guide](docs/database-schema.md).
+
+For your existing Windows installation, stop Node.js and take a **full database backup** first. Then, in PowerShell:
+
+```powershell
+cd "D:\New folder\inventory-management-system"
+git pull origin main
+npm.cmd ci
+npm.cmd run db:normalize
+npm.cmd run dev
+```
+
+Use the same `.env` database connection. Docker is not needed for this migration. It preserves existing IDs, users/password hashes, permissions, sessions, company/logo/currency, stock, balances and transactions; it does not add demo data. The migration requires database DDL privileges, so IT may need to run it. If unmapped or inconsistent data is found, the complete transaction rolls back. Normal startup refuses an old JSON schema until this command succeeds. Do not delete/recreate the database to upgrade.
+
 ## SQL Server in GitHub Codespaces
 
 Requires an x86-64 Codespace with at least 4 GB RAM, Node.js 24, and Docker. SQL Server 2022 Developer is for development/testing only; production requires a suitable licensed edition or Express within its limits.
@@ -47,11 +63,11 @@ On subsequent starts, run `npm run db:up` followed by `npm run dev`. SQL Server 
 
 ### View tables
 
-`npm run db:shell` opens the local SQL Server client. Enter `SELECT name FROM sys.tables;` followed by `GO`. For a table: `SELECT id, data FROM products;` followed by `GO`. SQL Server Management Studio (SSMS), VS Code's MSSQL extension, and Power BI can also connect to your office SQL Server. Do not expose the development database port publicly.
+`npm run db:shell` opens the local SQL Server client. Enter `SELECT name FROM sys.tables;` followed by `GO`. For a table: `SELECT id, sku, name, stock FROM products;` followed by `GO`. SQL Server Management Studio (SSMS), VS Code's MSSQL extension, and Power BI can also connect to your office SQL Server. Do not expose the development database port publicly.
 
 ### Your office SQL Server
 
-Use SQL Server 2019 or newer, database compatibility level 150 or newer, and a fixed TCP port (1433 by default). A DBA should create the database and a dedicated SQL-authenticated app login, apply `mssql-schema.sql` using SSMS, and grant CRUD access to the app tables. Explicit ID restoration also requires table ALTER permissions for products, customers, vendors, documents, and movements. Avoid connecting the app as `sa`. Grant only SELECT on approved reporting tables/views to a separate Power BI account; exclude password hashes and session tokens.
+Use SQL Server 2019 or newer, database compatibility level 150 or newer, and a fixed TCP port (1433 by default). A DBA should create the database and a dedicated SQL-authenticated app login, apply `mssql-schema.sql` using SSMS, and grant CRUD access to the app tables. Grant CRUD on all application tables including document_items and user_permissions. Explicit ID restoration also requires table ALTER permissions for products, customers, vendors, documents, and movements. See docs/database-schema.md for migration permissions. Avoid connecting the app as `sa`. Grant only SELECT on approved reporting tables/views to a separate Power BI account; exclude password hashes and session tokens.
 
 Configure `.env` using `.env.example`: `DB_CLIENT=mssql`, `MSSQL_HOST`, `MSSQL_PORT`, `MSSQL_DATABASE`, `MSSQL_USER`, and `MSSQL_PASSWORD`. Set `MSSQL_ENCRYPT=true` and `MSSQL_TRUST_SERVER_CERTIFICATE=false` with a trusted server certificate whose identity matches the connection address. The local setup script opts into the development container's self-signed certificate; do not copy that exception into production. Restrict database access to the app server and approved Power BI/gateway machines. The app's browser origin is separate: set `APP_ORIGIN` to its exact HTTPS address.
 
@@ -88,7 +104,9 @@ Backup downloads contain business data, including receipts, but exclude accounts
 - `db.js`: shared asynchronous business transactions and seeding.
 - `storage.js`: database selection and MySQL/SQLite compatibility.
 - `mssql-storage.js`: SQL Server pooling, serializable transactions, bound parameters, and identity handling.
-- `mssql-schema.sql`: SQL Server schema with JSON validation and foreign keys.
+- `mssql-schema.sql`: typed relational SQL Server schema, foreign keys and indexes.
+- `relational.js`: column/child-row mapping for the existing HTTP API.
+- `scripts/normalize-mssql.js`: atomic, verified legacy SQL Server schema upgrade.
 - `scripts/migrate-mysql-mssql.js`: verified, atomic MySQL-to-SQL Server migration.
 - `mysql-schema.sql`: InnoDB schema.
 - `scripts/migrate-sqlite.js`: checked, atomic SQLite-to-MySQL import.
