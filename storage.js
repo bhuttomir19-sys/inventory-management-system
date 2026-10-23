@@ -21,4 +21,4 @@ export async function connectDatabase(env=process.env) {
  if(driver==='mysql'){const schema=readFileSync(new URL('./mysql-schema.sql',import.meta.url),'utf8');for(const sql of schema.split(';').map(s=>s.trim()).filter(Boolean))await db.exec(sql);}
  return db;
 }
-export async function transaction(db,fn){if(db.transaction)return db.transaction(fn);db.exec('BEGIN IMMEDIATE');try{const result=await fn(db);db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}}
+export async function transaction(db,fn){if(db.transaction)return db.transaction(fn);if(db.isTransaction)return fn(db);db.exec('BEGIN IMMEDIATE');try{const result=await fn(db);db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}}

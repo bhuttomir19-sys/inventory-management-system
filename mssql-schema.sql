@@ -138,3 +138,20 @@ IF OBJECT_ID(N'dbo.audit',N'U') IS NULL CREATE TABLE dbo.audit(id INT IDENTITY(1
 GO
 IF OBJECT_ID(N'dbo.schema_migrations',N'U') IS NULL CREATE TABLE dbo.schema_migrations(version INT PRIMARY KEY, appliedAt DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME());
 IF NOT EXISTS(SELECT 1 FROM dbo.schema_migrations WHERE version=2) INSERT INTO dbo.schema_migrations(version) VALUES(2);
+GO
+IF OBJECT_ID(N'dbo.finance_accounts',N'U') IS NULL CREATE TABLE dbo.finance_accounts(code VARCHAR(20) PRIMARY KEY, name NVARCHAR(120) NOT NULL, type VARCHAR(20) NOT NULL CHECK(type IN ('asset','liability','equity','income','expense')), groupName NVARCHAR(60) NOT NULL, cashFlow VARCHAR(20) NOT NULL CHECK(cashFlow IN ('operating','investing','financing')), isCash INT NOT NULL DEFAULT 0 CHECK(isCash IN(0,1)));
+GO
+IF OBJECT_ID(N'dbo.finance_books',N'U') IS NULL CREATE TABLE dbo.finance_books(id INT PRIMARY KEY CHECK(id=1), startDate DATE NOT NULL, createdAt DATETIME2(3) NOT NULL);
+GO
+IF OBJECT_ID(N'dbo.finance_journals',N'U') IS NULL BEGIN
+ CREATE TABLE dbo.finance_journals(id INT IDENTITY(1,1) PRIMARY KEY, date DATE NOT NULL, reference NVARCHAR(100) NOT NULL, description NVARCHAR(255) NOT NULL, sourceType VARCHAR(20) NOT NULL, sourceId INT NULL);
+ CREATE UNIQUE INDEX financial_source ON dbo.finance_journals(sourceType,sourceId) WHERE sourceId IS NOT NULL;
+ CREATE INDEX financial_date ON dbo.finance_journals(date,id);
+END;
+GO
+IF OBJECT_ID(N'dbo.finance_lines',N'U') IS NULL BEGIN
+ CREATE TABLE dbo.finance_lines(journalId INT NOT NULL REFERENCES dbo.finance_journals(id), lineNumber INT NOT NULL, accountCode VARCHAR(20) NOT NULL REFERENCES dbo.finance_accounts(code), debit DECIMAL(28,8) NOT NULL DEFAULT 0, credit DECIMAL(28,8) NOT NULL DEFAULT 0, PRIMARY KEY(journalId,lineNumber), CHECK((debit>0 AND credit=0) OR (credit>0 AND debit=0)));
+ CREATE INDEX financial_account ON dbo.finance_lines(accountCode,journalId);
+END;
+GO
+IF NOT EXISTS(SELECT 1 FROM dbo.schema_migrations WHERE version=3) INSERT INTO dbo.schema_migrations(version) VALUES(3);

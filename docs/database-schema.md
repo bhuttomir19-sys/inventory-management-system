@@ -1,4 +1,4 @@
-# SQL Server relational schema (version 2)
+# SQL Server relational schema (versions 2–3)
 
 Application fields are ordinary typed columns. There is no JSON `data` or `permissions` column. JSON is still the HTTP API and portable backup format; it is not the SQL Server storage format.
 
@@ -15,7 +15,11 @@ Application fields are ordinary typed columns. There is no JSON `data` or `permi
 | user_permissions | userId + module + action | userId → users (cascade delete); one row per permission, such as reports / export |
 | sessions | token | userId → users, expires and duration (epoch/duration milliseconds) |
 | audit | id, identity | date, actor, action, details (free-text history) |
-| schema_migrations | version | appliedAt; version 2 records this schema |
+| schema_migrations | version | appliedAt; version 2 is the business schema, version 3 adds financial books |
+| finance_accounts | code | name, type, groupName, cashFlow, isCash |
+| finance_books | id = 1 | startDate, createdAt |
+| finance_journals | id, identity | date, reference, description, sourceType, sourceId (unique per automatic posting) |
+| finance_lines | journalId + lineNumber | journalId → finance_journals, accountCode → finance_accounts, debit, credit |
 
 Use `mssql-schema.sql` for complete column definitions, indexes and constraints. Monetary values, quantities, balances and rates use fixed-point `DECIMAL(28,8)` (settings tax is `DECIMAL(12,8)`); business dates use `DATE`, audit timestamps use `DATETIME2(3)`, Unicode text uses `NVARCHAR`, and image bytes use `VARBINARY(MAX)` with separate MIME/name columns. API amounts remain JavaScript numbers and are restricted to its safe numeric range; this is not arbitrary-precision accounting. Inputs with more than 8 meaningful decimal places fail instead of silently rounding. Display currency precision remains two decimal places.
 
@@ -62,3 +66,5 @@ WHERE d.kind = 'sales';
 Use a separate read-only reporting account. Do not grant Power BI access to passwords, sessions or unrestricted user information. Schema migration adds child-table foreign keys: for an authorized all-demo cleanup, delete movements and documents (which cascades document_items) before deleting products/customers/vendors. Keep users and settings to preserve login/branding. Do not use earlier JSON_VALUE queries on the new schema.
 
 For runtime permissions, grant SELECT/INSERT/UPDATE/DELETE on the application tables, including document_items and user_permissions. Explicit-ID business restores also need ALTER on products, customers, vendors, documents and movements; migrations additionally need schema DDL and temporary ALTER on users/audit for preserved IDs. Revoke migration-only permissions after cutover. Tables remain in dbo; do not change schema ownership during migration.
+
+For opening balances, ledger postings and accounting reports see [Finance and accounts](finance-and-accounts.md). Once books are active, use full native database backups/restores; do not clear operational tables separately from the ledger.

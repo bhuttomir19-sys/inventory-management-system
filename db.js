@@ -1,15 +1,19 @@
+import {postDocument,postMasterOpening} from './finance.js';
 import {relationalRows,writeRelational,insertSqlRow,replacePermissions,userPermissions} from './relational.js';
 import {transaction} from './storage.js';
 import {hashPassword} from './sqlite.js';
 export {openDB,hashPassword,verifyPassword} from './sqlite.js';
 export const rows=async(db,table)=>db.driver==='mssql'?relationalRows(db,table):(await db.prepare(`SELECT * FROM ${table} ORDER BY id DESC${db.driver==='mysql'&&db.inTransaction?' FOR UPDATE':''}`).all()).map(r=>r.data?{...JSON.parse(r.data),id:r.id,...(r.kind?{kind:r.kind,date:r.date}:{})}:r);
 export async function settings(db){return db.driver==='mssql'?(await rows(db,'settings'))[0]||{}:JSON.parse((await db.prepare('SELECT data FROM settings WHERE id=1').get())?.data||'{}');}
-export async function put(db,table,data,id){
+async function storeRecord(db,table,data,id){
  if(db.driver==='mssql')return writeRelational(db,table,data,id);
  if(id){const result=await db.prepare(`UPDATE ${table} SET data=? WHERE id=?`).run(JSON.stringify(data),id);if(!result.changes&&table==='settings')await db.prepare('INSERT INTO settings(id,data) VALUES(?,?)').run(id,JSON.stringify(data));}
  else if(table==='documents')id=Number((await db.prepare('INSERT INTO documents(kind,date,data) VALUES(?,?,?)').run(data.kind,data.date,JSON.stringify(data))).lastInsertRowid);
  else id=Number((await db.prepare(`INSERT INTO ${table}(data) VALUES(?)`).run(JSON.stringify(data))).lastInsertRowid);
  return id;
+}
+export async function put(db,table,data,id){
+ return transaction(db,async()=>{const result=await storeRecord(db,table,data,id);if(!id&&['products','customers','vendors'].includes(table))await postMasterOpening(db,table,data,result);return result;});
 }
 export async function insertRecord(db,table,data,id){
  if(db.driver==='mssql')return writeRelational(db,table,data,id,{insert:true});
@@ -40,19 +44,19 @@ export async function createDocument(db,kind,input) {
  let data={...input,date};if(['payments','cash'].includes(kind)&&!['received','paid'].includes(input.direction))throw Error('Invalid payment direction');if(kind==='adjustments'&&!['in','out'].includes(input.direction))throw Error('Invalid stock direction');
  if(['sales','purchases'].includes(kind)) {
  const table=kind==='sales'?'customers':'vendors';const party=(await rows(db,table)).find(p=>p.id===Number(input.partyId));if(!party) throw Error('Select a valid customer or vendor');
- if(!input.items?.length) throw Error('Add at least one product'); let subtotal=0,cost=0;
+ if(!input.items?.length) throw Error('Add at least one product'); let subtotal=0,cost=0,inventoryChange=0;
  for(const item of input.items){const p=(await rows(db,'products')).find(p=>p.id===Number(item.productId)); const qty=Number(item.quantity),rate=Number(item.rate);if(!p||!Number.isFinite(qty)||qty<=0||!Number.isFinite(rate)||rate<0) throw Error('Invalid product, quantity or rate');if(kind==='sales'&&qty>p.stock) throw Error(`Insufficient stock for ${p.name}`);subtotal+=qty*rate;cost+=qty*p.purchasePrice;
- if(kind==='purchases')p.purchasePrice=Math.round(((p.stock*p.purchasePrice+qty*rate)/(p.stock+qty))*100)/100;p.stock+=kind==='sales'?-qty:qty; await put(db,'products',p,p.id);await db.prepare('INSERT INTO movements(productId,date,quantity,reason) VALUES(?,?,?,?)').run(p.id,date,kind==='sales'?-qty:qty,kind);item.name=p.name;item.sku=p.sku; }
+ const previousValue=p.stock*p.purchasePrice;if(kind==='purchases')p.purchasePrice=Math.round(((p.stock*p.purchasePrice+qty*rate)/(p.stock+qty))*100)/100;p.stock+=kind==='sales'?-qty:qty;inventoryChange+=p.stock*p.purchasePrice-previousValue; await put(db,'products',p,p.id);await db.prepare('INSERT INTO movements(productId,date,quantity,reason) VALUES(?,?,?,?)').run(p.id,date,kind==='sales'?-qty:qty,kind);item.name=p.name;item.sku=p.sku; }
  const discount=Number(input.discount||0),tax=Number(input.tax||0),charges=Number(input.charges||0),paid=Number(input.paid||0);if([discount,tax,charges,paid].some(n=>!Number.isFinite(n)||n<0)||discount>subtotal||tax>100) throw Error('Invalid discount, tax, charges or payment');
  const total=Math.round(((subtotal-discount)*(1+tax/100)+charges)*100)/100;if(!Number.isFinite(total))throw Error('Invoice total is invalid');if(paid>total)throw Error('Paid amount exceeds invoice total');party.balance=Math.round((Number(party.balance||0)+total-paid)*100)/100;await put(db,table,party,party.id);
- data={...data,partyId:party.id,partyName:party.name,subtotal,total,paid,outstanding:Math.round((total-paid)*100)/100,revenue:subtotal-discount+charges,cost,status:paid===total?'Paid':paid>0?'Partial':'Unpaid'};
+ data={...data,inventoryChange,partyId:party.id,partyName:party.name,subtotal,total,paid,outstanding:Math.round((total-paid)*100)/100,revenue:subtotal-discount+charges,cost,status:paid===total?'Paid':paid>0?'Partial':'Unpaid'};
  } else {
  const amount=Number(input.amount);if(!Number.isFinite(amount)||amount<=0) throw Error('Amount must be positive');data.total=amount;
  if(kind==='payments'){const table=input.direction==='received'?'customers':'vendors';const party=(await rows(db,table)).find(p=>p.id===Number(input.partyId));if(!party)throw Error('Select a valid customer or vendor');if(amount>party.balance)throw Error('Payment exceeds outstanding balance');party.balance=Math.round((party.balance-amount)*100)/100;await put(db,table,party,party.id);data.partyName=party.name;
  let remaining=amount;for(const doc of (await rows(db,'documents')).reverse().filter(d=>d.kind===(table==='customers'?'sales':'purchases')&&d.partyId===party.id&&d.outstanding>0)){const applied=Math.min(remaining,doc.outstanding);doc.paid=Math.round((doc.paid+applied)*100)/100;doc.outstanding=Math.round((doc.outstanding-applied)*100)/100;doc.status=doc.outstanding===0?'Paid':'Partial';await put(db,'documents',doc,doc.id);remaining-=applied;if(remaining<=0)break;}}
- if(kind==='adjustments'){const p=(await rows(db,'products')).find(p=>p.id===Number(input.productId));const q=input.direction==='in'?amount:-amount;if(!p||p.stock+q<0)throw Error('Invalid stock adjustment');p.stock+=q;await put(db,'products',p,p.id);await db.prepare('INSERT INTO movements(productId,date,quantity,reason) VALUES(?,?,?,?)').run(p.id,date,q,input.reason||'Adjustment');}
+ if(kind==='adjustments'){const p=(await rows(db,'products')).find(p=>p.id===Number(input.productId));const q=input.direction==='in'?amount:-amount;if(!p||p.stock+q<0)throw Error('Invalid stock adjustment');data.cost=Math.abs(q)*p.purchasePrice;p.stock+=q;await put(db,'products',p,p.id);await db.prepare('INSERT INTO movements(productId,date,quantity,reason) VALUES(?,?,?,?)').run(p.id,date,q,input.reason||'Adjustment');}
  }
- const id=await put(db,'documents',{...data,kind,date});const config=await settings(db);const prefix=kind==='sales'?(config.invoicePrefix||'INV'):{purchases:'PUR',payments:'PAY',expenses:'EXP',adjustments:'STK',cash:'CSH'}[kind];data.number=`${prefix}-${String(id).padStart(5,'0')}`;await put(db,'documents',{...data,kind,date},id);return {...data,id,kind};
+ const id=await put(db,'documents',{...data,kind,date});const config=await settings(db);const prefix=kind==='sales'?(config.invoicePrefix||'INV'):{purchases:'PUR',payments:'PAY',expenses:'EXP',adjustments:'STK',cash:'CSH'}[kind];data.number=`${prefix}-${String(id).padStart(5,'0')}`;await put(db,'documents',{...data,kind,date},id);await postDocument(db,kind,data,id);return {...data,id,kind};
  });
 }
 export async function seed(db) {

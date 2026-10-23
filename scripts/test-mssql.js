@@ -7,6 +7,6 @@ const pool=await new sql.ConnectionPool(sqlServerConfig({...process.env,MSSQL_US
 const database='tradeflow_test_'+Date.now();
 try{
  await pool.request().query(`CREATE DATABASE [${database}]`);
- const child=spawn(process.execPath,['--test','--test-timeout=30000',...process.argv.slice(2),'tests/mssql.integration.js','tests/normalize.integration.js'],{stdio:'inherit',env:{...process.env,DB_CLIENT:'mssql',MSSQL_DATABASE:database,MSSQL_USER:user,MSSQL_PASSWORD:password,MSSQL_ALLOW_INITIALIZE:'true',ADMIN_PASSWORD:'Tradeflow2026!'}});
+ const child=spawn(process.execPath,['--test','--test-timeout=30000',...process.argv.slice(2),'tests/mssql.integration.js','tests/normalize.integration.js','tests/finance.integration.js'],{stdio:'inherit',env:{...process.env,DB_CLIENT:'mssql',MSSQL_DATABASE:database,MSSQL_USER:user,MSSQL_PASSWORD:password,MSSQL_ALLOW_INITIALIZE:'true',ADMIN_PASSWORD:'Tradeflow2026!'}});
  const[code]=await once(child,'exit');process.exitCode=code||0;
 }finally{await pool.request().query(`ALTER DATABASE [${database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [${database}]`);await pool.close();}

@@ -9,7 +9,7 @@ export function sqlServerConfig(env=process.env, database=env.MSSQL_DATABASE) {
   options:{encrypt:env.MSSQL_ENCRYPT!=='false',trustServerCertificate:env.MSSQL_TRUST_SERVER_CERTIFICATE==='true',abortTransactionOnError:true},
   pool:{max:10,min:0,idleTimeoutMillis:30000},requestTimeout:60000};
 }
-const identityTables=new Set(['products','customers','vendors','documents','movements','users','audit']);
+const identityTables=new Set(['products','customers','vendors','documents','movements','users','audit','finance_journals']);
 // Translate the small shared query dialect; values always remain bound parameters.
 export function compileSqlServer(statement, params=[], {run=false}={}) {
  let index=0;

@@ -8,7 +8,7 @@ function image(value){if(!value)return {mime:null,content:null};const match=/^da
 const dataUri=(mime,content)=>content?`data:${mime};base64,${content.toString('base64')}`:'';
 export function relationalValues(table,data,{strict=false}={}){
  const descriptor=fields[table];if(!descriptor)throw Error('Unknown relational table');
- if(strict)for(const [key,value]of Object.entries(data))if(!Object.hasOwn(descriptor,key)&&!['id','kind','partyId','logo','receipt'].includes(key)&&!formFields.has(key)&&value!==undefined)throw Error(`Unmapped ${table}.${key}; migration stopped to prevent data loss`);
+ if(strict)for(const [key,value]of Object.entries(data))if(!Object.hasOwn(descriptor,key)&&!['id','kind','partyId','logo','receipt','inventoryChange'].includes(key)&&!formFields.has(key)&&value!==undefined)throw Error(`Unmapped ${table}.${key}; migration stopped to prevent data loss`);
  const row={};for(const [key,type]of Object.entries(descriptor)){
   let value=data[key];
   if(type==='decimal')value=numeric(value,key);

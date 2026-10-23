@@ -2,6 +2,10 @@
 
 A responsive React application with an Express API and persistent Microsoft SQL Server database, with MySQL/SQLite compatibility during migration. Includes a seeded demo company, dashboard, catalog, stock movements, customers, suppliers, sales, purchases, payments, cash/bank entries, expenses with image receipts, reports, printable invoices, configurable user permissions, company settings, audit logs, and business-data backup/restore.
 
+## Financial statements and accounting books
+
+Finance & accounts now includes cash flow, accrual P&L, balance sheet, trial balance, account drill-down, general ledger, chart of accounts, balanced journals, and CSV/print exports. Opening balances are verified once, then business transactions post automatically and atomically. Read [the financial setup and accounting guide](docs/finance-and-accounts.md) before initializing the books on an existing company. Full SQL Server backups are required to preserve financial history; business-only restore is blocked once books are active.
+
 ## Column-wise SQL Server storage
 
 SQL Server now uses relational columns for products, contacts, settings and transaction headers, plus `document_items` and `user_permissions` child tables. JSON is used for API responses/portable backups only. See [the schema, relationships, SQL queries and migration guide](docs/database-schema.md).

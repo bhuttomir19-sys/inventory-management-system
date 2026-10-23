@@ -1,0 +1,30 @@
+import test from'node:test';import assert from'node:assert/strict';import sql from'mssql';import{spawn}from'node:child_process';import{once}from'node:events';import{sqlServerConfig,connectSqlServer}from'../mssql-storage.js';
+test('SQL Server financial API: permissions, opening, automatic entries, journals, historical statements and restart persistence',async()=>{
+ const name=process.env.MSSQL_DATABASE+'_finance';const admin=await new sql.ConnectionPool(sqlServerConfig(process.env,'master')).connect();let child,db;const date=new Date().toISOString().slice(0,10);const port=40500+Math.floor(Math.random()*400);
+ const start=async()=>{let stderr='';child=spawn(process.execPath,['server.js'],{env:{...process.env,MSSQL_DATABASE:name,PORT:String(port),NODE_ENV:'production',CODESPACES:'false',APP_ORIGIN:'',COOKIE_SECURE:'false'},stdio:['ignore','pipe','pipe']});child.stderr.on('data',d=>stderr+=d);await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Finance server timed out: '+stderr)),15000);child.stdout.on('data',d=>{if(String(d).includes('Tradeflow running')){clearTimeout(timer);resolve();}});child.on('exit',code=>{clearTimeout(timer);reject(Error('Finance server exited '+code+': '+stderr));});});};
+ const stop=async()=>{if(child&&child.exitCode===null&&child.signalCode===null){child.kill();await once(child,'exit');}};
+ try{
+  await admin.request().query(`CREATE DATABASE [${name}]`);await start();let cookie='';
+  const call=async(path,method='GET',body)=>{const r=await fetch(`http://127.0.0.1:${port}/api/${path}`,{method,headers:{cookie,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await r.json();if(path==='login'&&r.ok)cookie=r.headers.get('set-cookie').split(';')[0];return{status:r.status,data};};
+  assert.equal((await call('finance')).status,401);assert.equal((await call('login','POST',{email:'admin@tradeflow.local',password:'Tradeflow2026!'})).status,200);const adminCookie=cookie;
+  assert.equal((await call('users','POST',{name:'Finance Viewer',email:'fin-view@example.com',password:'FinanceViewer2026!',role:'Accountant',permissions:{finance:['view']}})).status,200);
+  await call('login','POST',{email:'fin-view@example.com',password:'FinanceViewer2026!'});assert.equal((await call('finance')).status,200);assert.equal((await call('finance/opening','POST',{date,cash:100})).status,403);assert.equal((await call('finance/journals','POST',{})).status,403);cookie=adminCookie;
+  const before=await call('finance');assert.equal(before.data.initialized,false);assert.ok(before.data.snapshot.inventory>0);
+  const opening=await call('finance/opening','POST',{date,cash:100,bank:1000,expectedSnapshot:before.data.snapshot});assert.equal(opening.status,200,JSON.stringify(opening.data));assert.equal((await call('finance/opening','POST',{date,cash:1})).status,400);
+  db=await connectSqlServer({...process.env,MSSQL_DATABASE:name});const journalCount=async()=>(await db.prepare('SELECT COUNT(*) n FROM finance_journals').get()).n;const initialCount=await journalCount();
+  assert.equal((await call('finance/journals','POST',{date,description:'Bad journal',lines:[{accountCode:'1000',debit:10},{accountCode:'3100',credit:9}]})).status,400);assert.equal(await journalCount(),initialCount);
+  assert.equal((await call('finance/journals','POST',{date,description:'Bypass control',lines:[{accountCode:'1100',debit:10},{accountCode:'3100',credit:10}]})).status,400);
+  assert.equal((await call('finance/journals','POST',{date,description:'Owner contribution',lines:[{accountCode:'1010',debit:200},{accountCode:'3100',credit:200}]})).status,200);
+  const expense=await call('documents/expenses','POST',{date,amount:25,method:'Bank transfer',description:'Financial test expense'});assert.equal(expense.status,200,JSON.stringify(expense.data));
+  const docsBefore=(await call('state')).data.documents.length;
+  assert.equal((await call('documents/expenses','POST',{date:'2020-01-01',amount:1,method:'Cash',description:'Before cutover'})).status,400);assert.equal((await call('state')).data.documents.length,docsBefore);
+  assert.equal((await call('documents/cash','POST',{date,amount:1,direction:'received',counterAccount:'1100',description:'Bypass customer payment'})).status,400);
+  assert.equal((await call('restore','POST',{version:1})).status,400);
+  let state=(await call('finance')).data;assert.equal(state.initialized,true);assert.equal(state.profitLoss.netProfit,-25);assert.equal(state.cashFlow.closingCash,1275);assert.equal(state.cashFlow.netCashFlow,175);assert.equal(state.balanceSheet.difference,0);assert.equal(state.cashFlow.difference,0);assert.equal(state.trial.find(a=>a.code==='3100').balance,200);
+  const balance=await db.prepare('SELECT SUM(debit-credit) amount FROM finance_lines').get();assert.equal(balance.amount,0);
+  const operational=(await call('state')).data;const product=operational.products[0];const updated=await call('products/'+product.id,'PUT',{...product,purchasePrice:product.purchasePrice+1});assert.equal(updated.status,200,JSON.stringify(updated.data));
+  state=(await call('finance')).data;assert.equal(state.balanceSheet.difference,0);assert.equal(state.trial.find(a=>a.code==='1200').balance,Math.round(operational.products.reduce((s,p)=>s+p.stock*p.purchasePrice,0)*100)/100+product.stock);
+  const after=await journalCount();await stop();await start();cookie=adminCookie;const restarted=await call('finance');assert.equal(restarted.status,200);assert.equal(await journalCount(),after);assert.equal(restarted.data.cashFlow.closingCash,1275);
+  assert.equal((await call('finance/accounts','POST',{code:'6400',name:'Interest expense',type:'expense',groupName:'Operating expenses',cashFlow:'operating'})).status,200);assert.equal((await call('finance/accounts','POST',{code:'6400',name:'Duplicate',type:'expense',groupName:'Operating expenses',cashFlow:'operating'})).status,400);
+ }finally{await stop();await db?.close();await admin.request().query(`ALTER DATABASE [${name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [${name}]`);await admin.close();}
+});
