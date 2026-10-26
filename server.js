@@ -28,7 +28,7 @@ const configuredOrigins=publicOrigins();
 function safeOrigin(value){try{return new URL(value).origin;}catch{return '(invalid origin)';}}
 const app=express();const httpServer=createHttpServer(app);app.disable('x-powered-by');app.use(express.json({limit:'3mb'}));
 app.use(async(req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');if(req.method!=='GET'&&!validOrigin(req,configuredOrigins))return res.status(403).json({error:`Invalid request origin. Received: ${safeOrigin(req.headers.origin)}. Expected: ${configuredOrigins.join(', ')||`${req.protocol}://${req.get('host')}`}.`,code:'ORIGIN_MISMATCH'});next();});
-route('get','/api/health',async(req,res)=>{await db.prepare('SELECT 1').get();res.json({status:'ok',version:'codespaces-2',publicOrigins:configuredOrigins,database:db.driver});});
+route('get','/api/health',async(req,res)=>{await db.prepare('SELECT 1').get();res.json({status:'ok',version:'codespaces-2',publicOrigins:configuredOrigins,database:db.driver,...(process.env.APP_RELEASE?{release:process.env.APP_RELEASE}:{})});});
 app.use('/api',async(req,res,next)=>{res.setHeader('Cache-Control','no-store');next();});
 route('get','/api/branding',async(req,res)=>{res.setHeader('Cache-Control','no-store');res.json(publicBranding(await readSettings(db)));});
 const attempts=new Map();
@@ -71,7 +71,7 @@ httpServer.on('error',error=>{
  console.error(error.code==='EADDRINUSE'?`Port ${port} is already in use. Stop the older Tradeflow server before restarting.`:`Server startup failed: ${error.message}`);
  process.exit(1);
 });
-httpServer.listen(port,'0.0.0.0',error=>{
+httpServer.listen(port,process.env.BIND_HOST||'0.0.0.0',error=>{
  if(error)return; // Node may pass a bind error to the callback; the error handler reports it.
  console.log('Tradeflow running on port '+port);
  console.log('Public origins: '+(configuredOrigins.join(', ')||'local address only; set APP_ORIGIN for an HTTPS proxy'));

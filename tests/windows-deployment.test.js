@@ -1,0 +1,13 @@
+import test from'node:test';import assert from'node:assert/strict';import{mkdtempSync,writeFileSync,rmSync,readFileSync}from'node:fs';import{tmpdir}from'node:os';import{join}from'node:path';import{loadProductionConfig}from'../deploy/windows/runtime-config.mjs';
+const values={APP_ORIGIN:'https://192.168.1.50',PORT:3000,MSSQL_HOST:'127.0.0.1',MSSQL_PORT:1433,MSSQL_DATABASE:'tradeflow',MSSQL_USER:'app',MSSQL_PASSWORD:'test "quotes" \\ slash # and spaces'};
+function fixture(fn){const dir=mkdtempSync(join(tmpdir(),'tradeflow-config-'));const file=join(dir,'config.json');const cwd=process.cwd();const previous={...process.env};try{return fn(file);}finally{process.chdir(cwd);for(const key of Object.keys(process.env))if(!Object.hasOwn(previous,key))delete process.env[key];for(const[key,value]of Object.entries(previous))process.env[key]=value;rmSync(dir,{recursive:true,force:true});}}
+test('Production package preserves quoted credentials, enforces SQL Server/loopback/HTTPS and ignores insecure ambient flags',()=>fixture(file=>{
+ writeFileSync(file,JSON.stringify(values),{mode:0o600});process.env.DB_CLIENT='sqlite';process.env.MSSQL_ALLOW_INITIALIZE='true';process.env.COOKIE_SECURE='false';process.env.NODE_ENV='development';process.env.DOTENV_CONFIG_OVERRIDE='true';process.env.ADMIN_PASSWORD='must disappear';
+ loadProductionConfig(file);assert.equal(process.env.MSSQL_PASSWORD,values.MSSQL_PASSWORD);assert.equal(process.env.NODE_ENV,'production');assert.equal(process.env.DB_CLIENT,'mssql');assert.equal(process.env.BIND_HOST,'127.0.0.1');assert.equal(process.env.COOKIE_SECURE,'true');assert.equal(process.env.MSSQL_ALLOW_INITIALIZE,'false');assert.equal(process.env.MSSQL_ENCRYPT,'true');assert.equal(process.env.MSSQL_TRUST_SERVER_CERTIFICATE,'false');assert.equal(process.env.ADMIN_PASSWORD,undefined);assert.equal(process.env.DOTENV_CONFIG_OVERRIDE,undefined);
+}));
+test('Production package rejects invalid origins, ports, missing credentials and certificate flags before startup',()=>fixture(file=>{
+ for(const patch of [{APP_ORIGIN:'http://192.168.1.50'},{APP_ORIGIN:'https://192.168.1.50/path'},{APP_ORIGIN:'https://192.168.1.50/'},{PORT:'bad'},{MSSQL_PORT:70000},{MSSQL_PASSWORD:''},{MSSQL_TRUST_SERVER_CERTIFICATE:'yes'}]){writeFileSync(file,JSON.stringify({...values,...patch}));assert.throws(()=>loadProductionConfig(file));}
+}));
+test('Production package accepts UTF-8 BOM configuration and explicit local SQL certificate exception',()=>fixture(file=>{
+ writeFileSync(file,'\ufeff'+JSON.stringify({...values,MSSQL_TRUST_SERVER_CERTIFICATE:true}));loadProductionConfig(file);assert.equal(process.env.MSSQL_TRUST_SERVER_CERTIFICATE,'true');
+}));

@@ -2,6 +2,10 @@
 
 A responsive React application with an Express API and persistent Microsoft SQL Server database, with MySQL/SQLite compatibility during migration. Includes a seeded demo company, dashboard, catalog, stock movements, customers, suppliers, sales, purchases, payments, cash/bank entries, expenses with image receipts, reports, printable invoices, configurable user permissions, company settings, audit logs, and business-data backup/restore.
 
+## One-package Windows / IIS deployment
+
+Run `npm run package:windows` on the development checkout to build a Windows x64 ZIP containing the compiled frontend, backend, production dependencies, portable Node.js and Windows service setup. The target server does not need Git/npm/a separate Node installation. IIS/ARR/URL Rewrite, an HTTPS certificate and SQL Server remain server prerequisites. The installer preserves existing records or initializes a clean administrator/company with no demo data. See [Windows package setup](deploy/windows/README-FIRST.md) for installation, updates, protected configuration, backup and recovery.
+
 ## Financial statements and accounting books
 
 Finance & accounts now includes cash flow, accrual P&L, balance sheet, trial balance, account drill-down, general ledger, chart of accounts, balanced journals, and CSV/print exports. Opening balances are verified once, then business transactions post automatically and atomically. Read [the financial setup and accounting guide](docs/finance-and-accounts.md) before initializing the books on an existing company. Full SQL Server backups are required to preserve financial history; business-only restore is blocked once books are active.

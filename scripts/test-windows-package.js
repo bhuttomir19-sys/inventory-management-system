@@ -1,0 +1,25 @@
+import 'dotenv/config';
+import sql from'mssql';import{sqlServerConfig}from'../mssql-storage.js';import{spawn}from'node:child_process';import{once}from'node:events';import{mkdtempSync,writeFileSync,rmSync,existsSync,readFileSync}from'node:fs';import{tmpdir}from'node:os';import{join,resolve}from'node:path';import{randomBytes}from'node:crypto';import assert from'node:assert/strict';
+const packageRoot=resolve(process.argv[2]||'releases/.windows-stage/TradeflowERP'),app=join(packageRoot,'app');if(!existsSync(join(app,'windows-entry.mjs')))throw Error('Build a package first, or pass the extracted TradeflowERP directory');
+const local=['127.0.0.1','localhost'].includes(process.env.MSSQL_HOST);const user=process.env.MSSQL_TEST_USER||(local&&process.env.MSSQL_SA_PASSWORD?'sa':process.env.MSSQL_USER),password=process.env.MSSQL_TEST_PASSWORD||(user==='sa'?process.env.MSSQL_SA_PASSWORD:process.env.MSSQL_PASSWORD);
+const admin=await new sql.ConnectionPool(sqlServerConfig({...process.env,MSSQL_USER:user,MSSQL_PASSWORD:password},'master')).connect();
+const database='tradeflow_package_test_'+Date.now(),dir=mkdtempSync(join(tmpdir(),'tradeflow-package-test-')),config=join(dir,'appsettings.json'),port=44000+Math.floor(Math.random()*1000),loginPassword=randomBytes(24).toString('hex');let child;
+const env={...process.env,TRADEFLOW_CONFIG:config,NODE_ENV:'development',DB_CLIENT:'sqlite',CODESPACES:'true'};
+const run=async(mode,input)=>{const processChild=spawn(process.execPath,['--use-system-ca',join(app,'windows-entry.mjs'),mode],{env,stdio:['pipe','pipe','pipe']});let output='';processChild.stdout.on('data',d=>output+=d);processChild.stderr.on('data',d=>output+=d);processChild.stdin.end(input?JSON.stringify(input):'');const[code]=await once(processChild,'exit');return{code,output};};
+try{
+ await admin.request().query(`CREATE DATABASE [${database}]`);
+ writeFileSync(config,JSON.stringify({APP_ORIGIN:'https://192.0.2.10',PORT:port,MSSQL_HOST:process.env.MSSQL_HOST,MSSQL_PORT:process.env.MSSQL_PORT||1433,MSSQL_DATABASE:database,MSSQL_USER:user,MSSQL_PASSWORD:password,MSSQL_TRUST_SERVER_CERTIFICATE:process.env.MSSQL_TRUST_SERVER_CERTIFICATE==='true'}),{mode:0o600});
+ assert.equal((await run('--check-db')).code,0);
+ const normalized=await run('--normalize');assert.equal(normalized.code,0,normalized.output);
+ const input={email:'package@example.test',password:loginPassword,company:'Package verification',currency:'PKR'};const created=await run('--create-admin',input);assert.equal(created.code,0,created.output);
+ assert.equal((await run('--create-admin',{...input,password:'DoNotResetExistingUser2026!'})).code,1);
+ child=spawn(process.execPath,['--use-system-ca',join(app,'windows-entry.mjs')],{env,stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',d=>stderr+=d);
+ await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Packaged startup timed out: '+stderr)),15000);child.stdout.on('data',d=>{if(String(d).includes('Tradeflow running')){clearTimeout(timer);resolve();}});child.on('exit',c=>{clearTimeout(timer);reject(Error('Packaged server exited '+c+': '+stderr));});});
+ const base=`http://127.0.0.1:${port}`;const health=await(await fetch(base+'/api/health')).json();assert.equal(health.database,'mssql');assert.equal(health.release,JSON.parse(readFileSync(join(app,'release.json'),'utf8')).commit);assert.deepEqual(health.publicOrigins,['https://192.0.2.10']);
+ const login=await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://192.0.2.10'},body:JSON.stringify({email:input.email,password:loginPassword})});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];assert.ok(login.headers.get('set-cookie').includes('Secure'));
+ const state=await(await fetch(base+'/api/state',{headers:{cookie}})).json();assert.equal(state.settings.company,input.company);assert.equal(state.settings.currency,'PKR');assert.equal(state.users.length,1);assert.equal(state.products.length,0);assert.equal(state.documents.length,0);assert.equal(state.customers.length,0);assert.equal(state.vendors.length,0);
+ const html=await(await fetch(base)).text();assert.ok(html.includes('/assets/'));
+ for(const font of ['dm-sans.ttf','manrope.ttf']){const response=await fetch(base+'/fonts/'+font);assert.equal(response.status,200);const bytes=new Uint8Array(await response.arrayBuffer());assert.deepEqual([...bytes.slice(0,4)],[0,1,0,0]);}
+ const privateResponse=await(await fetch(base+'/configuration/appsettings.json')).text();assert.ok(!privateResponse.includes(password));
+ console.log('PASS: staged production dependencies, schema upgrade, clean admin initialization, no password reset, SQL Server login/API, secure cookies, built frontend and offline fonts. Windows node.exe/IIS execution still requires Windows validation.');
+}finally{if(child&&child.exitCode===null&&child.signalCode===null){child.kill();await once(child,'exit');}await admin.request().query(`ALTER DATABASE [${database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [${database}]`);await admin.close();rmSync(dir,{recursive:true,force:true});}

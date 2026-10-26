@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+ <system.webServer>
+  <modules><remove name="WebDAVModule" /></modules>
+  <handlers><remove name="WebDAV" /></handlers>
+  <httpErrors existingResponse="PassThrough" />
+  <rewrite><rules><rule name="TradeflowNodeProxy" stopProcessing="true"><match url="(.*)" /><action type="Rewrite" url="http://127.0.0.1:__PORT__/{R:1}" appendQueryString="true" /></rule></rules></rewrite>
+ </system.webServer>
+</configuration>
